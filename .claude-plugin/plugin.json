@@ -1,0 +1,22 @@
+{
+  "name": "metaphrasis",
+  "description": "Read audio you cannot hear. Turns music and narrated video into measurement a model can act on: tempo, key, loudness, structure, clean cut points, and whether the music is burying the voice. It measures; it does not claim to hear.",
+  "version": "1.0.0",
+  "author": {
+    "name": "Ryan Heltemes",
+    "url": "https://ryan-heltemes.com"
+  },
+  "homepage": "https://github.com/Pr1m4lc0d3/metaphrasis",
+  "repository": "https://github.com/Pr1m4lc0d3/metaphrasis",
+  "license": "MIT",
+  "keywords": [
+    "audio",
+    "music",
+    "video",
+    "transcription",
+    "librosa",
+    "ffmpeg",
+    "whisper",
+    "skills"
+  ]
+}
