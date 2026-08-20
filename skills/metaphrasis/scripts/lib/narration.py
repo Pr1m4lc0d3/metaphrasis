@@ -244,7 +244,31 @@ def _script_words(text: str) -> list:
     return [w for w in out if w not in _FILLER]
 
 
-def compare_to_script(transcript: str, script: str) -> dict:
+def _seam_words(segments: list) -> set:
+    """Words sitting either side of a transcription boundary.
+
+    Whisper decodes in windows and stitches the pieces. When a window ends mid-sentence it can
+    invent filler across the join: a clean take of "Nothing here phones home, and no part of it is
+    chosen on your behalf" came back as "...phones are on." / "It runs home, and no part..." with
+    the split at exactly 30.0s. The audio was perfect and every beat transcribed correctly on its
+    own; only the stitched read was wrong.
+
+    That matters because a checker that reports invented words when nothing was invented gets
+    ignored, and then it is worse than having no checker. Words at a seam are reported as
+    suspected artifacts instead of faults.
+    """
+    out = set()
+    for i, s in enumerate(segments):
+        if i == 0:
+            continue
+        for text in (segments[i - 1].get("text", ""), s.get("text", "")):
+            words = re.sub(r"[^a-z0-9 ]", " ", text.lower()).split()
+            out.update(words[:4])
+            out.update(words[-4:])
+    return out
+
+
+def compare_to_script(transcript: str, script: str, segments: list | None = None) -> dict:
     """Did the narrator say what it was given?
 
     This exists because a synthesiser will occasionally invent a word. A take went out reading
@@ -271,17 +295,29 @@ def compare_to_script(transcript: str, script: str) -> dict:
                 "error": "script and audio do not correspond (%.0f%% match). Wrong file, or the "
                          "narration is not this script." % (ratio * 100)}
 
-    added, dropped = [], []
+    seam = _seam_words(segments or [])
+    added, dropped, artifacts = [], [], []
     for tag, i1, i2, j1, j2 in SequenceMatcher(None, want, got).get_opcodes():
         if tag == "insert":
-            added.append(" ".join(got[j1:j2]))
+            run = got[j1:j2]
+            # Short run, entirely made of words from a stitch boundary: the transcriber's seam,
+            # not the narrator's mouth. Reported, never counted as a fault.
+            if run and len(run) <= 6 and all(w in seam for w in run):
+                artifacts.append(" ".join(run))
+            else:
+                added.append(" ".join(run))
         elif tag == "delete":
-            dropped.append(" ".join(want[i1:i2]))
+            run = want[i1:i2]
+            if run and len(run) <= 6 and all(w in seam for w in run):
+                artifacts.append(" ".join(run))
+            else:
+                dropped.append(" ".join(run))
         elif tag == "replace":
             pass  # homophones and near-misses; see the docstring
     return {
         "added": added,
         "dropped": dropped,
+        "artifacts": artifacts,
         "similarity": round(ratio, 3),
         "faithful": not added and not dropped,
     }
@@ -314,7 +350,7 @@ def analyse(source: Path, script: str | None = None) -> dict:
             "dead_air": find_dead_air(segments, duration),
         }
         if script:
-            report["script_check"] = compare_to_script(transcript, script)
+            report["script_check"] = compare_to_script(transcript, script, segments)
     return report
 
 
@@ -353,6 +389,8 @@ def render_report(report: dict) -> str:
             lines.append(f"  UNCHECKED — {check['error']}")
         elif check["faithful"]:
             lines.append(f"  faithful — every word accounted for ({check['similarity']:.0%} match)")
+            for w in check.get("artifacts", []):
+                lines.append(f"  (transcription seam, not the narration: {w!r})")
         else:
             for w in check["added"]:
                 lines.append(f"  ADDED    {w!r} — not in the script")
