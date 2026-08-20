@@ -129,7 +129,18 @@ def cmd_splice(args):
 
 
 def cmd_narration(args):
-    report = narration.analyse(Path(args.file))
+    script = None
+    if args.script:
+        sp = Path(args.script)
+        if sp.exists():
+            script = sp.read_text(encoding="utf-8")
+        elif len(args.script) < 260 and ("\\" in args.script or "/" in args.script)                 and args.script.rstrip().endswith((".txt", ".md", ".json")):
+            # Looks like a path and is not there. Treating it as the script text instead compares
+            # the narration against a filename, which scores near zero and once read as a pass.
+            raise SystemExit(f"no script file at {sp}")
+        else:
+            script = args.script
+    report = narration.analyse(Path(args.file), script=script)
     if args.json:
         print(json.dumps(report, indent=1))
         return
@@ -166,6 +177,9 @@ def main():
 
     p = sub.add_parser("narration", help="transcribe a narrated video and check the mix")
     p.add_argument("file")
+    # Without this the report can only say how the narration SOUNDS, never whether it is right.
+    p.add_argument("--script", help="the text the narrator was given: a file path, or the text "
+                                    "itself. Checks for invented and skipped words.")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_narration)
 

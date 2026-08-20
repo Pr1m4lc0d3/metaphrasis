@@ -13,6 +13,7 @@ import re
 import subprocess
 import tempfile
 import warnings
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import librosa
@@ -233,8 +234,65 @@ def pacing(segments: list, speaking_seconds: float | None = None) -> dict:
             "rushed": rushed, "slow": slow, "per_line": True}
 
 
-def analyse(source: Path) -> dict:
-    """Full narration report for a video or audio file."""
+# Whisper's own habits rather than the narrator's. Stripping them stops a take being blamed for
+# how the transcriber punctuated a pause.
+_FILLER = {"uh", "um", "mm", "hmm", "ah"}
+
+
+def _script_words(text: str) -> list:
+    out = re.sub(r"[^a-z0-9 ]", " ", text.lower()).split()
+    return [w for w in out if w not in _FILLER]
+
+
+def compare_to_script(transcript: str, script: str) -> dict:
+    """Did the narrator say what it was given?
+
+    This exists because a synthesiser will occasionally invent a word. A take went out reading
+    "And not a list of ingredients" where the script said "Not a list of ingredients", and every
+    other measure here was happy: the mix was clean, the pacing was normal, the transcript was
+    printed in full and read perfectly well on its own. Nothing compares it to what was ASKED
+    for, so nothing could see the extra word. A human ear caught it.
+
+    ADDED and DROPPED words are faults. SUBSTITUTED words are not reported as faults, because
+    Whisper hears "would" as "wood" and "she is" as "she has" on takes that are perfectly fine.
+    Treating those as errors would condemn good audio; an insertion or a deletion is a real
+    difference in what was spoken.
+    """
+    want, got = _script_words(script), _script_words(transcript)
+    ratio = SequenceMatcher(None, want, got).ratio()
+
+    # A comparison that cannot line up must never come back clean. Handed the wrong file, this
+    # first reported "faithful" at a 2% match, because when nothing corresponds every difference
+    # lands in a `replace` and the two categories it does report stay empty. A reassuring verdict
+    # from a broken comparison is worse than no check at all.
+    if ratio < 0.6:
+        return {"added": [], "dropped": [], "similarity": round(ratio, 3),
+                "faithful": False,
+                "error": "script and audio do not correspond (%.0f%% match). Wrong file, or the "
+                         "narration is not this script." % (ratio * 100)}
+
+    added, dropped = [], []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(None, want, got).get_opcodes():
+        if tag == "insert":
+            added.append(" ".join(got[j1:j2]))
+        elif tag == "delete":
+            dropped.append(" ".join(want[i1:i2]))
+        elif tag == "replace":
+            pass  # homophones and near-misses; see the docstring
+    return {
+        "added": added,
+        "dropped": dropped,
+        "similarity": round(ratio, 3),
+        "faithful": not added and not dropped,
+    }
+
+
+def analyse(source: Path, script: str | None = None) -> dict:
+    """Full narration report for a video or audio file.
+
+    Pass `script` (the text the narrator was given) to also check that it said it. Without one,
+    every measure here is about how the narration SOUNDS, and none is about whether it is right.
+    """
     source = Path(source)
     with tempfile.TemporaryDirectory() as tmp:
         wav = extract_audio(source, Path(tmp) / "audio.wav")
@@ -244,15 +302,19 @@ def analyse(source: Path) -> dict:
         mix = measure_voice_against_bed(wav)
         # Speaking time from the audio, not from segment spans.
         speaking_seconds = duration * mix.get("speech_coverage", 0) or None
+        transcript = result.get("text", "") or " ".join(
+            s["text"].strip() for s in segments)
         report = {
             "file": source.name,
             "duration_sec": round(duration, 1),
-            "transcript": result.get("text", ""),
+            "transcript": transcript,
             "segments": segments,
             "mix": mix,
             "pacing": pacing(segments, speaking_seconds),
             "dead_air": find_dead_air(segments, duration),
         }
+        if script:
+            report["script_check"] = compare_to_script(transcript, script)
     return report
 
 
@@ -281,6 +343,24 @@ def render_report(report: dict) -> str:
     if pace["slow"]:
         lines += ["", "SLOW LINES (under 95 wpm)"]
         lines += [f"  {r['start']:>7.1f}s  {r['wpm']} wpm  {r['text']}" for r in pace["slow"][:8]]
+
+    # Before pacing and dead air: a line the narrator got WRONG matters more than one it took
+    # half a second too long over, and this is the check that was missing when a bad take shipped.
+    check = report.get("script_check")
+    if check is not None:
+        lines += ["", "AGAINST THE SCRIPT"]
+        if check.get("error"):
+            lines.append(f"  UNCHECKED — {check['error']}")
+        elif check["faithful"]:
+            lines.append(f"  faithful — every word accounted for ({check['similarity']:.0%} match)")
+        else:
+            for w in check["added"]:
+                lines.append(f"  ADDED    {w!r} — not in the script")
+            for w in check["dropped"]:
+                lines.append(f"  DROPPED  {w!r} — in the script, never spoken")
+    else:
+        lines += ["", "AGAINST THE SCRIPT",
+                  "  not checked — pass the script to catch an invented or skipped word"]
 
     if report["dead_air"]:
         lines += ["", "DEAD AIR (3s+ with no narration)"]
