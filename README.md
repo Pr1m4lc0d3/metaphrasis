@@ -87,3 +87,15 @@ Or copy `skills/metaphrasis/` into your `.claude/skills/` folder.
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+## Where this came from
+
+Deliberon is a Windows desktop app that runs a council of AI agents on a hard decision and hands back a Decision Record: dissent preserved, every claim marked as proved, asserted, or estimated.
+
+Metaphrasis is how the audio in its marketing gets read, published in full because a judgement about sound you cannot hear should be one you can inspect.
+
+Pay once, it's yours, no subscription. Thirty days of the full council with no account and no card. Runs on your machine with your own model keys.
+
+https://deliberon.com
