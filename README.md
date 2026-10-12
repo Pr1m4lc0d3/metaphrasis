@@ -86,7 +86,9 @@ Or copy `skills/metaphrasis/` into your `.claude/skills/` folder.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Not open source. All rights reserved. See [LICENSE](LICENSE).
+
+Licences are sold: https://www.agensi.io/skills/metaphrasis-read-audio-you-cannot-hear
 
 ---
 
